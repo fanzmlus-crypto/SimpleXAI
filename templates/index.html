@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimpleXAI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <button class="new-chat" onclick="newChat()">+ New Chat</button>
+            </div>
+            <div class="chat-list" id="chatList">
+                <div class="chat-item active">Current Chat</div>
+            </div>
+            <div class="sidebar-footer">
+                <span>SimpleXAI</span>
+            </div>
+        </aside>
+
+        <main class="main">
+            <div class="chat-container" id="chatContainer">
+                <div class="welcome">
+                    <h2>SimpleXAI</h2>
+                    <p>Unrestricted AI Assistant</p>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ketik pesan..." rows="1" onkeydown="handleKey(event)"></textarea>
+                    <button onclick="sendMessage()" class="send-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const convId = "{{ conv_id }}";
+        let history = [];
+
+        function handleKey(e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatMessage(text) {
+            text = escapeHtml(text);
+            text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+                const cleanCode = code.trim();
+                const runBtn = lang === "python" ? `<button class="run-code-btn" onclick="runSnippet(this)" data-code="${encodeURIComponent(cleanCode)}">Run</button>` : "";
+                return `<div class="code-block"><div class="code-header"><span>${lang || "code"}</span>${runBtn}</div><pre><code>${cleanCode}</code></pre></div>`;
+            });
+            text = text.replace(/`([^`]+)`/g, "<code class=\"inline\">$1</code>");
+            text = text.replace(/\n/g, "<br>");
+            return text;
+        }
+
+        function addMessage(role, content) {
+            const container = document.getElementById("chatContainer");
+            const welcome = container.querySelector(".welcome");
+            if (welcome) welcome.remove();
+
+            const div = document.createElement("div");
+            div.className = `message ${role}`;
+            div.innerHTML = `<div class="message-content">${formatMessage(content)}</div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById("userInput");
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage("user", message);
+            input.value = "";
+            input.style.height = "auto";
+
+            history.push({role: "user", content: message});
+
+            const loadingDiv = document.createElement("div");
+            loadingDiv.className = "message assistant loading";
+            loadingDiv.innerHTML = `<div class="message-content"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>`;
+            document.getElementById("chatContainer").appendChild(loadingDiv);
+
+            try {
+                const res = await fetch("/chat", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({conv_id: convId, message, history})
+                });
+                const data = await res.json();
+                loadingDiv.remove();
+                addMessage("assistant", data.response);
+                history.push({role: "assistant", content: data.response});
+            } catch (e) {
+                loadingDiv.remove();
+                addMessage("assistant", "Error: Gagal terhubung ke server.");
+            }
+        }
+
+        async function runSnippet(btn) {
+            const code = decodeURIComponent(btn.dataset.code);
+            btn.textContent = "Running...";
+            btn.disabled = true;
+            try {
+                const res = await fetch("/run", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({code})
+                });
+                const data = await res.json();
+                const container = btn.closest(".code-block");
+                let outputDiv = container.querySelector(".code-output");
+                if (!outputDiv) {
+                    outputDiv = document.createElement("div");
+                    outputDiv.className = "code-output";
+                    container.appendChild(outputDiv);
+                }
+                outputDiv.innerHTML = `<pre>${escapeHtml(data.stdout || data.stderr || data.error || "No output")}</pre>`;
+            } catch (e) {
+                btn.textContent = "Error";
+            }
+            btn.textContent = "Run";
+            btn.disabled = false;
+        }
+
+        function newChat() {
+            location.reload();
+        }
+
+        const textarea = document.getElementById("userInput");
+        textarea.addEventListener("input", function() {
+            this.style.height = "auto";
+            this.style.height = Math.min(this.scrollHeight, 200) + "px";
+        });
+    </script>
+</body>
+  </html>
